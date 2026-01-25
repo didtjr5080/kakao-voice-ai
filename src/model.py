@@ -111,7 +111,8 @@ class LightweightChatbot:
         if use_lora:
             print(f"LoRA config (r={lora_r}, alpha={lora_alpha})")
             
-            if self.load_in_4bit:
+            # CPU 모드에서는 4bit 학습 준비 생략
+            if self.load_in_4bit and self.device == "cuda":
                 self.model = prepare_model_for_kbit_training(self.model)
             
             peft_config = LoraConfig(
@@ -153,18 +154,21 @@ class LightweightChatbot:
             remove_columns=['text']
         )
         
+        # CPU 모드에서는 gradient checkpointing 비활성화
+        use_gradient_checkpointing = self.device == "cuda"
+        
         training_args = TrainingArguments(
             output_dir=output_dir,
             num_train_epochs=epochs,
             per_device_train_batch_size=batch_size,
             gradient_accumulation_steps=4,
             learning_rate=learning_rate,
-            fp16=self.device == "cuda",
-            logging_steps=10,
-            save_steps=100,
+            fp16=False,  # CPU에서는 fp16 사용 불가
+            logging_steps=100,
+            save_steps=500,
             save_total_limit=2,
             warmup_steps=50,
-            gradient_checkpointing=True,
+            gradient_checkpointing=use_gradient_checkpointing,
             optim="adamw_torch",
             report_to="none"
         )
@@ -182,6 +186,9 @@ class LightweightChatbot:
         )
         
         print("\nTraining started...")
+        print("NOTE: CPU training is SLOW. This may take several hours.")
+        print("Consider using Google Colab with GPU for faster training.")
+        
         trainer.train()
         
         print(f"\nSaving model to: {output_dir}")

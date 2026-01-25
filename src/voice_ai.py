@@ -33,21 +33,21 @@ class VoiceConversationAI:
         """카카오톡 파일로부터 학습"""
         
         print("\n" + "="*70)
-        print("🎙️ 음성 대화 AI 학습 시작")
+        print(">>> Voice AI Training Started")
         print("="*70)
         
-        print("\n📚 Step 1: 카카오톡 대화 파싱...")
+        print("\n[Step 1] Parsing KakaoTalk messages...")
         messages = self.parser.parse_file(file_path)
         
         if not messages:
-            raise ValueError("파싱된 메시지가 없습니다.")
+            raise ValueError("No messages parsed")
         
         stats = self.parser.get_user_stats(messages)
-        print(f"\n   대화 참여자:")
+        print(f"\nParticipants:")
         for user, count in stats.items():
-            print(f"   - {user}: {count}개 메시지")
+            print(f"  - {user}: {count} messages")
         
-        print(f"\n📊 Step 2: '{target_username}' 학습 데이터 생성...")
+        print(f"\n[Step 2] Creating training data for '{target_username}'...")
         training_pairs = self.parser.create_training_pairs(
             messages, 
             target_username,
@@ -55,16 +55,16 @@ class VoiceConversationAI:
         )
         
         if not training_pairs:
-            raise ValueError(f"'{target_username}' 사용자의 응답을 찾을 수 없습니다.")
+            raise ValueError(f"No responses found for user '{target_username}'")
         
-        print(f"   ✓ {len(training_pairs)}개 학습 쌍 생성")
+        print(f"  Created {len(training_pairs)} training pairs")
         
-        print("\n   📝 학습 데이터 샘플:")
+        print("\n  Sample data:")
         for i, (inp, out) in enumerate(training_pairs[:3], 1):
-            print(f"   {i}. 입력: {inp}")
-            print(f"      응답: {out}")
+            print(f"  {i}. Input: {inp}")
+            print(f"     Output: {out}")
         
-        print(f"\n🤖 Step 3: 모델 학습...")
+        print(f"\n[Step 3] Training model...")
         model_path = self.chatbot.train(
             training_pairs=training_pairs,
             output_dir=output_dir,
@@ -75,35 +75,35 @@ class VoiceConversationAI:
         
         self.is_trained = True
         
-        print(f"\n🎤 Step 4: 음성 시스템 로딩...")
+        print(f"\n[Step 4] Loading voice systems...")
         self.stt.load()
         self.tts.load()
         
         print("\n" + "="*70)
-        print("✅ 모든 시스템 준비 완료!")
+        print(">>> All systems ready!")
         print("="*70 + "\n")
         
         return model_path
     
     def load_trained_model(self, model_path: str):
         """학습된 모델 로드"""
-        print(f"📂 학습된 모델 로딩: {model_path}")
+        print(f"Loading trained model: {model_path}")
         self.chatbot.load_model(model_path, use_lora=True)
         self.stt.load()
         self.tts.load()
         self.is_trained = True
-        print("✅ 모든 시스템 준비 완료!")
+        print("All systems ready!")
     
     def voice_chat(self, audio_path: str) -> Tuple[str, str, str]:
         """음성 입력 → AI 응답 (음성)"""
         
         if not self.is_trained:
-            return "⚠️ 모델을 먼저 학습하거나 로드해주세요.", "", None
+            return "Model not loaded. Please train or load first.", "", None
         
         user_text = self.stt.transcribe(audio_path)
         
-        if user_text.startswith("[음성 인식 실패"):
-            return user_text, "음성 인식에 실패했습니다.", None
+        if user_text.startswith("["):
+            return user_text, "Speech recognition failed.", None
         
         ai_response = self.chatbot.generate_response(user_text)
         ai_audio_path = self.tts.speak(ai_response)
@@ -114,7 +114,7 @@ class VoiceConversationAI:
         """텍스트 입력 → AI 응답 (음성)"""
         
         if not self.is_trained:
-            return "⚠️ 모델을 먼저 학습하거나 로드해주세요.", None
+            return "Model not loaded. Please train or load first.", None
         
         ai_response = self.chatbot.generate_response(user_text)
         ai_audio_path = self.tts.speak(ai_response)

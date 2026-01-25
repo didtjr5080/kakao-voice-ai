@@ -50,7 +50,7 @@ class KakaoTalkParser:
                         'message': message
                     })
         
-        print(f"✅ {len(messages)}개 메시지 파싱 완료")
+        print(f"Parsed {len(messages)} messages")
         return messages
     
     def create_training_pairs(
@@ -78,7 +78,7 @@ class KakaoTalkParser:
                 output_text = next_msg['message']
                 training_pairs.append((input_text, output_text))
         
-        print(f"✅ {len(training_pairs)}개 학습 쌍 생성")
+        print(f"Created {len(training_pairs)} training pairs")
         return training_pairs
     
     def get_user_stats(self, messages: List[Dict]) -> Dict[str, int]:

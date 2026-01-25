@@ -40,12 +40,23 @@ class LightweightChatbot:
         
         print(f"Loading model: {model_path or self.model_name}")
         
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_path or self.model_name
-        )
+        # LoRA 모델 로드 시 토크나이저도 학습된 경로에서 로드
+        if use_lora and model_path:
+            self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                model_path or self.model_name
+            )
         
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        
+        # 특수 토큰 추가 (학습 시와 동일하게)
+        special_tokens = {
+            'additional_special_tokens': ['<|user|>', '<|bot|>', '<|end|>']
+        }
+        num_added = self.tokenizer.add_special_tokens(special_tokens)
+        print(f"Added {num_added} special tokens, vocab size: {len(self.tokenizer)}")
         
         if self.load_in_4bit and self.device == "cuda":
             quantization_config = BitsAndBytesConfig(
@@ -62,22 +73,28 @@ class LightweightChatbot:
                 trust_remote_code=True
             )
         else:
+            # 기본 모델 먼저 로드
             self.model = AutoModelForCausalLM.from_pretrained(
-                model_path or self.model_name,
+                self.model_name,  # 기본 모델 경로 사용
                 trust_remote_code=True
             )
+            # 임베딩 크기 조정
+            self.model.resize_token_embeddings(len(self.tokenizer))
+            
             if self.device == "cuda":
                 self.model = self.model.to(self.device)
         
+        # LoRA 어댑터 로드
         if use_lora and model_path:
             try:
+                print(f"Loading LoRA adapter from {model_path}")
                 self.model = PeftModel.from_pretrained(self.model, model_path)
-                print("LoRA adapter loaded")
-            except:
-                print("No LoRA adapter found")
+                print("✅ LoRA adapter loaded")
+            except Exception as e:
+                print(f"⚠️ LoRA adapter load failed: {e}")
         
         self.model.eval()
-        print(f"Model loaded (Device: {self.device})")
+        print(f"✅ Model loaded (Device: {self.device})")
         
         if self.device == "cuda":
             print(f"VRAM: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
@@ -111,7 +128,6 @@ class LightweightChatbot:
         if use_lora:
             print(f"LoRA config (r={lora_r}, alpha={lora_alpha})")
             
-            # CPU 모드에서는 4bit 학습 준비 생략
             if self.load_in_4bit and self.device == "cuda":
                 self.model = prepare_model_for_kbit_training(self.model)
             
@@ -154,7 +170,6 @@ class LightweightChatbot:
             remove_columns=['text']
         )
         
-        # CPU 모드에서는 gradient checkpointing 비활성화
         use_gradient_checkpointing = self.device == "cuda"
         
         training_args = TrainingArguments(
@@ -163,7 +178,7 @@ class LightweightChatbot:
             per_device_train_batch_size=batch_size,
             gradient_accumulation_steps=4,
             learning_rate=learning_rate,
-            fp16=False,  # CPU에서는 fp16 사용 불가
+            fp16=False,
             logging_steps=100,
             save_steps=500,
             save_total_limit=2,
@@ -186,8 +201,9 @@ class LightweightChatbot:
         )
         
         print("\nTraining started...")
-        print("NOTE: CPU training is SLOW. This may take several hours.")
-        print("Consider using Google Colab with GPU for faster training.")
+        if self.device == "cpu":
+            print("NOTE: CPU training is SLOW. This may take several hours.")
+            print("Consider using Google Colab with GPU for faster training.")
         
         trainer.train()
         

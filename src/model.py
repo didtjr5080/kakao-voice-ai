@@ -38,7 +38,7 @@ class LightweightChatbot:
     def load_model(self, model_path: Optional[str] = None, use_lora: bool = False):
         """모델 로드 (4bit 양자화 적용)"""
         
-        print(f"📂 모델 로딩: {model_path or self.model_name}")
+        print(f"Loading model: {model_path or self.model_name}")
         
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path or self.model_name
@@ -72,15 +72,15 @@ class LightweightChatbot:
         if use_lora and model_path:
             try:
                 self.model = PeftModel.from_pretrained(self.model, model_path)
-                print("✅ LoRA 어댑터 로드 완료")
+                print("LoRA adapter loaded")
             except:
-                print("⚠️ LoRA 어댑터 없음")
+                print("No LoRA adapter found")
         
         self.model.eval()
-        print(f"✅ 모델 로드 완료 (Device: {self.device})")
+        print(f"Model loaded (Device: {self.device})")
         
         if self.device == "cuda":
-            print(f"💾 VRAM: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+            print(f"VRAM: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
     
     def train(
         self,
@@ -96,7 +96,7 @@ class LightweightChatbot:
         """모델 학습 (LoRA 파인튜닝)"""
         
         print("\n" + "="*60)
-        print("🚀 모델 학습 시작")
+        print(">>> Model Training Started")
         print("="*60)
         
         if self.model is None:
@@ -109,7 +109,7 @@ class LightweightChatbot:
         self.model.resize_token_embeddings(len(self.tokenizer))
         
         if use_lora:
-            print(f"🔧 LoRA 설정 (r={lora_r}, alpha={lora_alpha})")
+            print(f"LoRA config (r={lora_r}, alpha={lora_alpha})")
             
             if self.load_in_4bit:
                 self.model = prepare_model_for_kbit_training(self.model)
@@ -126,14 +126,14 @@ class LightweightChatbot:
             self.model = get_peft_model(self.model, peft_config)
             self.model.print_trainable_parameters()
         
-        print(f"\n📊 데이터셋 준비 ({len(training_pairs)}개)")
+        print(f"\nPreparing dataset ({len(training_pairs)} samples)")
         
         training_texts = [
             f"<|user|>{inp}<|bot|>{out}<|end|>"
             for inp, out in training_pairs
         ]
         
-        print("\n📝 샘플:")
+        print("\nTraining data samples:")
         for i, text in enumerate(training_texts[:3], 1):
             print(f"  {i}. {text[:100]}...")
         
@@ -181,14 +181,14 @@ class LightweightChatbot:
             data_collator=data_collator
         )
         
-        print("\n🔥 학습 시작...")
+        print("\nTraining started...")
         trainer.train()
         
-        print(f"\n💾 모델 저장: {output_dir}")
+        print(f"\nSaving model to: {output_dir}")
         trainer.save_model(output_dir)
         self.tokenizer.save_pretrained(output_dir)
         
-        print("\n✅ 학습 완료!")
+        print("\n>>> Training Complete!")
         return output_dir
     
     def generate_response(
@@ -202,7 +202,7 @@ class LightweightChatbot:
         """응답 생성"""
         
         if self.model is None or self.tokenizer is None:
-            return "⚠️ 모델이 로드되지 않았습니다."
+            return "Model not loaded"
         
         prompt = f"<|user|>{user_input}<|bot|>"
         

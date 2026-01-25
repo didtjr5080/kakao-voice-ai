@@ -1,0 +1,28 @@
+model:
+  name: "skt/kogpt2-base-v2"
+  load_in_4bit: true
+  
+lora:
+  use_lora: true
+  r: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules:
+    - "c_attn"
+    - "c_proj"
+
+generation:
+  max_length: 100
+  temperature: 0.8
+  top_p: 0.9
+  top_k: 50
+  repetition_penalty: 1.2
+
+stt:
+  model_size: "tiny"
+  language: "ko"
+
+tts:
+  engine: "pyttsx3"
+  rate: 150
+  volume: 1.0

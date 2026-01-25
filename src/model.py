@@ -18,9 +18,10 @@ from peft import (
 from datasets import Dataset
 from typing import List, Tuple, Optional
 import os
+import re
 
 class LightweightChatbot:
-    """경량 한국어 챗봇 모델 (VRAM 1.5GB 이하)"""
+    """경량 한국어 챗봇 모델"""
     
     def __init__(
         self, 
@@ -36,27 +37,33 @@ class LightweightChatbot:
         self.model = None
     
     def load_model(self, model_path: Optional[str] = None, use_lora: bool = False):
-        """모델 로드 (4bit 양자화 적용)"""
+        """모델 로드"""
         
         print(f"Loading model: {model_path or self.model_name}")
         
-        # LoRA 모델 로드 시 토크나이저도 학습된 경로에서 로드
         if use_lora and model_path:
+            print(f"Loading tokenizer from: {model_path}")
             self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+            
+            if '<|user|>' not in self.tokenizer.get_vocab():
+                special_tokens = {
+                    'additional_special_tokens': ['<|user|>', '<|bot|>', '<|end|>']
+                }
+                num_added = self.tokenizer.add_special_tokens(special_tokens)
+                print(f"Added {num_added} special tokens")
         else:
             self.tokenizer = AutoTokenizer.from_pretrained(
                 model_path or self.model_name
             )
+            special_tokens = {
+                'additional_special_tokens': ['<|user|>', '<|bot|>', '<|end|>']
+            }
+            self.tokenizer.add_special_tokens(special_tokens)
         
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         
-        # 특수 토큰 추가 (학습 시와 동일하게)
-        special_tokens = {
-            'additional_special_tokens': ['<|user|>', '<|bot|>', '<|end|>']
-        }
-        num_added = self.tokenizer.add_special_tokens(special_tokens)
-        print(f"Added {num_added} special tokens, vocab size: {len(self.tokenizer)}")
+        print(f"Tokenizer vocab size: {len(self.tokenizer)}")
         
         if self.load_in_4bit and self.device == "cuda":
             quantization_config = BitsAndBytesConfig(
@@ -67,24 +74,21 @@ class LightweightChatbot:
             )
             
             self.model = AutoModelForCausalLM.from_pretrained(
-                model_path or self.model_name,
+                self.model_name,
                 quantization_config=quantization_config,
                 device_map="auto",
                 trust_remote_code=True
             )
         else:
-            # 기본 모델 먼저 로드
             self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_name,  # 기본 모델 경로 사용
+                self.model_name,
                 trust_remote_code=True
             )
-            # 임베딩 크기 조정
-            self.model.resize_token_embeddings(len(self.tokenizer))
-            
             if self.device == "cuda":
                 self.model = self.model.to(self.device)
         
-        # LoRA 어댑터 로드
+        self.model.resize_token_embeddings(len(self.tokenizer))
+        
         if use_lora and model_path:
             try:
                 print(f"Loading LoRA adapter from {model_path}")
@@ -92,6 +96,7 @@ class LightweightChatbot:
                 print("✅ LoRA adapter loaded")
             except Exception as e:
                 print(f"⚠️ LoRA adapter load failed: {e}")
+                raise
         
         self.model.eval()
         print(f"✅ Model loaded (Device: {self.device})")
@@ -99,18 +104,8 @@ class LightweightChatbot:
         if self.device == "cuda":
             print(f"VRAM: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
     
-    def train(
-        self,
-        training_pairs: List[Tuple[str, str]],
-        output_dir: str = "./models/kakao-chatbot",
-        epochs: int = 3,
-        batch_size: int = 1,
-        learning_rate: float = 2e-4,
-        use_lora: bool = True,
-        lora_r: int = 8,
-        lora_alpha: int = 16
-    ):
-        """모델 학습 (LoRA 파인튜닝)"""
+    def train(self, training_pairs, output_dir="./models/kakao-chatbot", epochs=3, batch_size=1, learning_rate=2e-4, use_lora=True, lora_r=8, lora_alpha=16):
+        """모델 학습"""
         
         print("\n" + "="*60)
         print(">>> Model Training Started")
@@ -150,10 +145,6 @@ class LightweightChatbot:
             for inp, out in training_pairs
         ]
         
-        print("\nTraining data samples:")
-        for i, text in enumerate(training_texts[:3], 1):
-            print(f"  {i}. {text[:100]}...")
-        
         dataset = Dataset.from_dict({'text': training_texts})
         
         def tokenize_function(examples):
@@ -170,8 +161,6 @@ class LightweightChatbot:
             remove_columns=['text']
         )
         
-        use_gradient_checkpointing = self.device == "cuda"
-        
         training_args = TrainingArguments(
             output_dir=output_dir,
             num_train_epochs=epochs,
@@ -183,7 +172,7 @@ class LightweightChatbot:
             save_steps=500,
             save_total_limit=2,
             warmup_steps=50,
-            gradient_checkpointing=use_gradient_checkpointing,
+            gradient_checkpointing=self.device == "cuda",
             optim="adamw_torch",
             report_to="none"
         )
@@ -201,10 +190,6 @@ class LightweightChatbot:
         )
         
         print("\nTraining started...")
-        if self.device == "cpu":
-            print("NOTE: CPU training is SLOW. This may take several hours.")
-            print("Consider using Google Colab with GPU for faster training.")
-        
         trainer.train()
         
         print(f"\nSaving model to: {output_dir}")
@@ -214,14 +199,42 @@ class LightweightChatbot:
         print("\n>>> Training Complete!")
         return output_dir
     
-    def generate_response(
-        self,
-        user_input: str,
-        max_length: int = 100,
-        temperature: float = 0.8,
-        top_p: float = 0.9,
-        top_k: int = 50
-    ) -> str:
+    def clean_response(self, text: str) -> str:
+        """응답 정리 (이름 필터링 추가)"""
+        
+        # 한글 자모 결합
+        jamo_map = {
+            'ᄀ': 'ㄱ', 'ᄂ': 'ㄴ', 'ᄃ': 'ㄷ', 'ᄅ': 'ㄹ', 'ᄆ': 'ㅁ',
+            'ᄇ': 'ㅂ', 'ᄉ': 'ㅅ', 'ᄋ': 'ㅇ', 'ᄌ': 'ㅈ', 'ᄎ': 'ㅊ',
+            'ᄏ': 'ㅋ', 'ᄐ': 'ㅌ', 'ᄑ': 'ㅍ', 'ᄒ': 'ㅎ'
+        }
+        
+        for jamo, hangul in jamo_map.items():
+            text = text.replace(jamo, hangul)
+        
+        # 불필요한 이름/토큰 제거 (학습 데이터에서 나온 이름들)
+        filter_words = [
+            '<unk>', '삼괴황정민', '삼괴정지민', '삼괴황정', 
+            '김범석', '황정민', '정지민'
+        ]
+        for word in filter_words:
+            text = text.replace(word, '')
+        
+        # 단독 자음 제거
+        text = re.sub(r'^[ㄱ-ㅎ;:?~!]+\s*', '', text)
+        text = re.sub(r'\s+[ㄱ-ㅎ;:]+\s*', ' ', text)
+        
+        # 반복 제거
+        text = re.sub(r'(.)\1{2,}', r'\1\1', text)
+        text = re.sub(r'([!?.]){3,}', r'\1\1', text)
+        text = re.sub(r'([~^;:.]){2,}', r'\1', text)
+        
+        # 앞뒤 공백 정리
+        text = text.strip(' ;:?~!.')
+        
+        return text
+    
+    def generate_response(self, user_input: str, max_length: int = 50, temperature: float = 0.7, top_p: float = 0.85, top_k: int = 40) -> str:
         """응답 생성"""
         
         if self.model is None or self.tokenizer is None:
@@ -239,14 +252,15 @@ class LightweightChatbot:
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
-                max_length=max_length,
+                max_new_tokens=25,  # 조금 더 길게
                 temperature=temperature,
                 top_p=top_p,
                 top_k=top_k,
                 do_sample=True,
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.encode('<|end|>')[0] if '<|end|>' in self.tokenizer.get_vocab() else self.tokenizer.eos_token_id,
-                repetition_penalty=1.2
+                repetition_penalty=1.8,  # 약간 완화
+                no_repeat_ngram_size=2
             )
         
         response = self.tokenizer.decode(outputs[0], skip_special_tokens=False)
@@ -254,5 +268,13 @@ class LightweightChatbot:
         if '<|bot|>' in response:
             response = response.split('<|bot|>')[-1]
             response = response.split('<|end|>')[0].strip()
+        
+        response = self.clean_response(response)
+        
+        # 빈 응답이면 기본 메시지
+        if not response or len(response) < 2:
+            fallback_responses = ["ㅋㅋ", "그래", "오 ㄱㄱ", "ㅇㅇ"]
+            import random
+            response = random.choice(fallback_responses)
         
         return response
